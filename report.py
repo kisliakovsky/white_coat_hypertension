@@ -808,6 +808,19 @@ class ReportDataFrame(object):
         return data
 
     @staticmethod
+    def _calc_day_night_intervals():
+        twenty_four_hours = TimeDelta(hours=24)
+        intervals = []
+        first_day_length = ReportDataFrame._FIRST_NIGHT_START_TIME - ReportDataFrame._START_TIME
+        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(first_day_length / ReportDataFrame._TIME_INTERVAL)))
+        sec_day_start_time = ReportDataFrame._FIRST_DAY_START_TIME + twenty_four_hours
+        first_night_length = sec_day_start_time - ReportDataFrame._FIRST_NIGHT_START_TIME
+        intervals.append((ReportDataFrame._NIGHT_TIME_KEY, int(first_night_length / ReportDataFrame._TIME_INTERVAL)))
+        sec_day_length = ReportDataFrame._FINISH_TIME - sec_day_start_time
+        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(sec_day_length / ReportDataFrame._TIME_INTERVAL)))
+        return intervals
+
+    @staticmethod
     def _calc_time_intervals():
         zero_time = TimeDelta(0)
         whole_time = ReportDataFrame._TIME_PERIOD
@@ -848,7 +861,8 @@ class ReportDataFrame(object):
             for _ in ReportDataFrame._MEASUREMENT_KEYS:
                 header_row.append(key)
         header_row.append(ReportDataFrame._FIRST_HOUR_MAX_KEY)
-        intervals = ReportDataFrame._calc_time_intervals()
+        intervals = ReportDataFrame._calc_day_night_intervals()
+        # intervals = ReportDataFrame._calc_time_intervals()
         for day_night_key, num in intervals:
             for i in range(num):
                 for _ in ReportDataFrame._MEASUREMENT_KEYS:
