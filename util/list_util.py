@@ -1,3 +1,5 @@
+from typing import Tuple, List, Iterable
+
 import util.string_util as su
 
 
@@ -59,3 +61,25 @@ def search_among_neighbors(a_list, i, neighbor_pattern, remove_after=False):
             if remove_after:
                 del a_list[i:next_index + 1]
             return next_index, res
+
+
+def split_list(lst: List, lengths: Iterable[int]) -> List:
+    res = []
+    for length in lengths:
+        res.append(lst[0: length])
+        lst = lst[length:]
+    return res
+
+
+def compare_lists(a: List, b: List) -> bool:
+    """
+    compare lists
+    :param a: the first list
+    :param b: the second list
+    :return: True if lists are equal, otherwise False
+    """
+    return len(a) == len([i for i, j in zip(a, b) if i == j])
+
+
+def filter_list_by_value(lst: List, val) -> List:
+    return [x for x in lst if x != val]

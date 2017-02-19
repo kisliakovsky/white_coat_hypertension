@@ -1,3 +1,7 @@
+from typing import List
+import math
+
+
 def parse_quantity(s):
     res = s.split(' ')
     if len(res) == 2:
@@ -24,3 +28,12 @@ def mean(numbers):
     return float(sum(numbers)) / max(len(numbers), 1)
 
 
+def msd(numbers: List[int]) -> float:
+    n = len(numbers)
+    if n < 2:
+        return 0
+    else:
+        s = 0
+        for i in range(n - 1):
+            s += (numbers[i + 1] - numbers[i])**2
+        return math.sqrt(s / (n - 2))

@@ -1,7 +1,9 @@
 import operator
 from sys import stderr
 from collections import defaultdict
+# noinspection PyPep8Naming
 from datetime import datetime as DateTime
+# noinspection PyPep8Naming
 from datetime import timedelta as TimeDelta
 
 import numpy as np
@@ -713,15 +715,30 @@ class ReportDataFrame(object):
     _BP_PHENOTYPE_KEY = "BP phenotype"
     _BP_PROFILE_KEY = "BP profile"
     _LAST_HOUR_MAX_SYS_BP_KEY = "Last hour max sBP"
-    _SINGLE_KEYS = (_ID_KEY, _PATIENT_NAME_KEY,_DATE_OF_BIRTH_KEY, _BP_PHENOTYPE_KEY,
+    _SINGLE_KEYS = (_ID_KEY, _PATIENT_NAME_KEY, _DATE_OF_BIRTH_KEY, _BP_PHENOTYPE_KEY,
                     _BP_PROFILE_KEY, _LAST_HOUR_MAX_SYS_BP_KEY)
     _AVG_DAY_KEY = "Avg BP per day"
     _AVG_AWAKE_KEY = "Avg BP while awake"
     _AVG_ASLEEP_KEY = "Avg BP while asleep"
     _AVG_KEYS = (_AVG_DAY_KEY, _AVG_AWAKE_KEY, _AVG_ASLEEP_KEY)
     _FIRST_HOUR_MAX_KEY = "BP max 1st hour"
+    _MSD_ALL_SYS_KEY = "sMSD all"
+    _MSD_DAY_SYS_KEY = "sMSD day (07-23)"
+    _MSD_ALT_DAY_SYS_KEY = "sMSD day (10-20)"
+    _MSD_NIGHT_SYS_KEY = "sMSD night (23-07)"
+    _MSD_ALT_NIGHT_SYS_KEY = "sMSD night (00-06)"
+    _MSD_ALL_DIA_KEY = "dMSD all"
+    _MSD_DAY_DIA_KEY = "dMSD day (07-23)"
+    _MSD_ALT_DAY_DIA_KEY = "dMSD day (10-20)"
+    _MSD_NIGHT_DIA_KEY = "dMSD night (23-07)"
+    _MSD_ALT_NIGHT_DIA_KEY = "dMSD night (00-06)"
+    _MSD_KEYS = (_MSD_ALL_SYS_KEY, _MSD_DAY_SYS_KEY, _MSD_ALT_DAY_SYS_KEY,
+                 _MSD_NIGHT_SYS_KEY, _MSD_ALT_NIGHT_SYS_KEY, _MSD_ALL_DIA_KEY,
+                 _MSD_DAY_DIA_KEY, _MSD_ALT_DAY_DIA_KEY, _MSD_NIGHT_DIA_KEY,
+                 _MSD_ALT_NIGHT_DIA_KEY)
     _DAY_TIME_KEY = "Awake time"
     _NIGHT_TIME_KEY = "Asleep time"
+    _EXTRA_TIME_KEY = "Extra time"
     _SYSTOLIC_KEY = "sBP"
     _DIASTOLIC_KEY = "dBP"
     _HEART_RATE_KEY = "HR"
@@ -737,21 +754,31 @@ class ReportDataFrame(object):
     _TIME_PERIOD = _FINISH_TIME - _START_TIME
     _FIRST_DAY_START_TIME = DateTime.strptime("01.01.1970 7:00", _DATETIME_FORMAT)
     _FIRST_NIGHT_START_TIME = DateTime.strptime("01.01.1970 23:00", _DATETIME_FORMAT)
+    _ALT_FIRST_DAY_START_TIME = DateTime.strptime("01.01.1970 10:00", _DATETIME_FORMAT)
+    _ALT_FIRST_DAY_FINISH_TIME = DateTime.strptime("01.01.1970 20:00", _DATETIME_FORMAT)
+    _ALT_FIRST_NIGHT_START_TIME = DateTime.strptime("02.01.1970 00:00", _DATETIME_FORMAT)
+    _ALT_FIRST_NIGHT_END_TIME = DateTime.strptime("02.01.1970 06:00", _DATETIME_FORMAT)
     _DAY_LEN = _FIRST_NIGHT_START_TIME - _FIRST_DAY_START_TIME
     _NIGHT_LEN = _FIRST_DAY_START_TIME + _TIME_PERIOD - _FIRST_NIGHT_START_TIME
     _TIME_INTERVAL_NUM = int(_TIME_PERIOD / _TIME_INTERVAL)
 
+    def __new__(cls, *args, **kwargs):
+        cls.DAY_NIGHT_INTERVALS = cls._calc_day_night_intervals()
+        cls.DAY_NIGHT_ALT_INTERVALS = cls._calc_day_night_alt_intervals()
+        return super(ReportDataFrame, cls).__new__(cls)
+
     def __init__(self, reports):
+        ReportDataFrame._calc_day_night_intervals()
         self.__columns = ReportDataFrame._prepare_columns()
         data = []
         for report in reports:
             data.append(ReportDataFrame._prepare_data(report))
         self.__frame = DataFrame(np.asarray(data), columns=self.__columns)
 
-    # noinspection PyListCreation
     @staticmethod
     def _prepare_data(report):
         measure_keys = (Report.SYSTOLIC_KEY, Report.DIASTOLIC_KEY, Report.HEART_RATE_KEY)
+        # noinspection PyListCreation
         data = []
         data.append(report.patient_id)
         data.append(report.patient_name)
@@ -793,18 +820,46 @@ class ReportDataFrame(object):
         index = 0
         measure_dates = report_values[Report.DATETIME_KEY]
         measure_dates_num = len(measure_dates)
+        sys_all = []
+        dia_all = []
         for time in time_columns:
             if index < measure_dates_num:
                 report_time = measure_dates[index].time()
             else:
                 report_time = None
             if report_time == time:
+                sys_all.append(report_values[Report.SYSTOLIC_KEY][index])
+                dia_all.append(report_values[Report.DIASTOLIC_KEY][index])
                 for key in measure_keys:
                     data.append(report_values[key][index])
                 index += 1
             else:
+                sys_all.append(None)
+                dia_all.append(None)
                 for _ in measure_keys:
                     data.append("")
+        dn_intervals = [v for k, v in ReportDataFrame.DAY_NIGHT_INTERVALS]
+        dna_intervals = [v for k, v in ReportDataFrame.DAY_NIGHT_ALT_INTERVALS]
+        sys_intervals = lutil.split_list(sys_all, dn_intervals)
+        dia_intervals = lutil.split_list(dia_all, dn_intervals)
+        sysa_intervals = lutil.split_list(sys_all, dna_intervals)
+        diaa_intervals = lutil.split_list(dia_all, dna_intervals)
+        sys_all = lutil.filter_list_by_value(sys_all, None)
+        dia_all = lutil.filter_list_by_value(dia_all, None)
+        sys_intervals = [lutil.filter_list_by_value(lst, None) for lst in sys_intervals]
+        dia_intervals = [lutil.filter_list_by_value(lst, None) for lst in dia_intervals]
+        sysa_intervals = [lutil.filter_list_by_value(lst, None) for lst in sysa_intervals][1::2]
+        diaa_intervals = [lutil.filter_list_by_value(lst, None) for lst in diaa_intervals][1::2]
+        data.append(mutil.msd(sys_all))
+        data.append(mutil.msd(sys_intervals[0] + sys_intervals[2]))
+        data.append(mutil.msd(sysa_intervals[0] + sysa_intervals[2]))
+        data.append(mutil.msd(sys_intervals[1]))
+        data.append(mutil.msd(sysa_intervals[1]))
+        data.append(mutil.msd(dia_all))
+        data.append(mutil.msd(dia_intervals[0] + dia_intervals[2]))
+        data.append(mutil.msd(diaa_intervals[0] + diaa_intervals[2]))
+        data.append(mutil.msd(dia_intervals[1]))
+        data.append(mutil.msd(diaa_intervals[1]))
         return data
 
     @staticmethod
@@ -821,32 +876,22 @@ class ReportDataFrame(object):
         return intervals
 
     @staticmethod
-    def _calc_time_intervals():
-        zero_time = TimeDelta(0)
-        whole_time = ReportDataFrame._TIME_PERIOD
+    def _calc_day_night_alt_intervals():
+        twenty_four_hours = TimeDelta(hours=24)
         intervals = []
-        past_time = ReportDataFrame._START_TIME - ReportDataFrame._FIRST_DAY_START_TIME
-        if past_time > zero_time:
-            left_time = ReportDataFrame._DAY_LEN - past_time
-            intervals.append((ReportDataFrame._DAY_TIME_KEY, left_time))
-            whole_time -= left_time
-            index = 1
-        else:
-            past_time = ReportDataFrame._FIRST_DAY_START_TIME - ReportDataFrame._START_TIME
-            intervals.append((ReportDataFrame._NIGHT_TIME_KEY, past_time))
-            whole_time -= past_time
-            index = 0
-        while whole_time > zero_time:
-            if index % 2 == 0:
-                intervals.append((ReportDataFrame._DAY_TIME_KEY, ReportDataFrame._DAY_LEN))
-                whole_time -= ReportDataFrame._DAY_LEN
-            else:
-                intervals.append((ReportDataFrame._NIGHT_TIME_KEY, ReportDataFrame._NIGHT_LEN))
-                whole_time -= ReportDataFrame._NIGHT_LEN
-            index += 1
-        last_interval = intervals[-1]
-        intervals[-1] = (last_interval[0], last_interval[1] + whole_time)
-        intervals = [(k, int(v / ReportDataFrame._TIME_INTERVAL)) for k, v in intervals]
+        extra_length = ReportDataFrame._ALT_FIRST_DAY_START_TIME - ReportDataFrame._START_TIME
+        intervals.append((ReportDataFrame._EXTRA_TIME_KEY, int(extra_length / ReportDataFrame._TIME_INTERVAL)))
+        first_day_length = ReportDataFrame._ALT_FIRST_DAY_FINISH_TIME - ReportDataFrame._ALT_FIRST_DAY_START_TIME
+        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(first_day_length / ReportDataFrame._TIME_INTERVAL)))
+        extra_length = ReportDataFrame._ALT_FIRST_NIGHT_START_TIME - ReportDataFrame._ALT_FIRST_DAY_FINISH_TIME
+        intervals.append((ReportDataFrame._EXTRA_TIME_KEY, int(extra_length / ReportDataFrame._TIME_INTERVAL)))
+        first_night_length = ReportDataFrame._ALT_FIRST_NIGHT_END_TIME - ReportDataFrame._ALT_FIRST_NIGHT_START_TIME
+        intervals.append((ReportDataFrame._NIGHT_TIME_KEY, int(first_night_length / ReportDataFrame._TIME_INTERVAL)))
+        sec_day_start_time = ReportDataFrame._ALT_FIRST_DAY_START_TIME + twenty_four_hours
+        extra_length = sec_day_start_time - ReportDataFrame._ALT_FIRST_NIGHT_END_TIME
+        intervals.append((ReportDataFrame._EXTRA_TIME_KEY, int(extra_length / ReportDataFrame._TIME_INTERVAL)))
+        sec_day_length = ReportDataFrame._FINISH_TIME - sec_day_start_time
+        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(sec_day_length / ReportDataFrame._TIME_INTERVAL)))
         return intervals
 
     @staticmethod
@@ -861,12 +906,13 @@ class ReportDataFrame(object):
             for _ in ReportDataFrame._MEASUREMENT_KEYS:
                 header_row.append(key)
         header_row.append(ReportDataFrame._FIRST_HOUR_MAX_KEY)
-        intervals = ReportDataFrame._calc_day_night_intervals()
-        # intervals = ReportDataFrame._calc_time_intervals()
-        for day_night_key, num in intervals:
+        # noinspection PyUnresolvedReferences
+        for day_night_key, num in ReportDataFrame.DAY_NIGHT_INTERVALS:
             for i in range(num):
                 for _ in ReportDataFrame._MEASUREMENT_KEYS:
                     header_row.append(day_night_key)
+        for msd_key in ReportDataFrame._MSD_KEYS:
+            header_row.append(msd_key)
         header_rows.append(header_row)
 
         header_row = []
@@ -884,6 +930,8 @@ class ReportDataFrame(object):
         for time_column in time_columns:
             for _ in ReportDataFrame._MEASUREMENT_KEYS:
                 header_row.append(time_column)
+        for _ in ReportDataFrame._MSD_KEYS:
+            header_row.append("")
         header_rows.append(header_row)
 
         header_row = []
@@ -894,6 +942,8 @@ class ReportDataFrame(object):
         for _ in time_columns:
             for key in ReportDataFrame._MEASUREMENT_KEYS:
                 header_row.append(key)
+        for _ in ReportDataFrame._MSD_KEYS:
+            header_row.append("")
         header_rows.append(header_row)
 
         return header_rows
