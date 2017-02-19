@@ -2,7 +2,7 @@
 Программа для автоматизированного разбора отчётов об измерении артериального давления
 
 ## Загрузка
-Архив с программой можно скачать [здесь]()
+Архив с программой можно скачать [здесь](https://niuitmo-my.sharepoint.com/personal/kisliakovskiii_niuitmo_ru/_layouts/15/guestaccess.aspx?docid=149429cd3888b4d8489cf1d1c7be43c31&authkey=AX_a8oJklIbgA6oeU-ESySA)
 
 ## Алгоритм установки
 1. Распаковать архив с программой  
