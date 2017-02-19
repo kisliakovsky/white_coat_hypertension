@@ -3,8 +3,9 @@ from os import listdir, makedirs, path
 from pathlib import Path
 from sys import stderr
 
-import page_handling as ph
-from report import Report, ReportDataFrame
+import src.page_handling as ph
+
+from src.report import Report, ReportDataFrame
 
 
 def _collect_report_paths(input_dir, input_ext):
@@ -20,9 +21,9 @@ def _extract_report_data(report_path):
     report_raw_data = ph.get_pages(report_path)[0]
     return report_raw_data
 
-INPUT_DIR = os.path.join('.', "raw")
+INPUT_DIR = os.path.join('..', "raw")
 INPUT_EXT = ".pdf"
-OUTPUT_DIR = os.path.join('.', "output")
+OUTPUT_DIR = os.path.join('..', "output")
 OUTPUT_EXT = ".csv"
 OUTPUT_FILE = "output"
 if not path.exists(OUTPUT_DIR):

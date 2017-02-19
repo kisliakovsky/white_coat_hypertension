@@ -1,5 +1,6 @@
 from unittest import TestCase
-import util.list_util as lutil
+
+from src.util import list_util as lutil
 
 
 class TestListUtil(TestCase):

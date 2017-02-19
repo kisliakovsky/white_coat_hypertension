@@ -1,18 +1,15 @@
-import os
 from collections import defaultdict
-from os.path import join as join_path
 
-from pdfminer.pdfpage import PDFPage
-from pdfminer.pdfparser import PDFParser
+from pdfminer.converter import PDFPageAggregator
+from pdfminer.layout import LAParams, LTTextLine, LTTextBox
 from pdfminer.pdfdocument import PDFDocument, PDFTextExtractionNotAllowed
 from pdfminer.pdfinterp import PDFPageInterpreter, PDFResourceManager
-from pdfminer.layout import LAParams, LTTextLine, LTTextBox, LTImage, LTFigure
-from pdfminer.converter import PDFPageAggregator
-from binascii import b2a_hex
+from pdfminer.pdfpage import PDFPage
+from pdfminer.pdfparser import PDFParser
 
-from util.string_util import StringJoiner
-import util.string_util as sutil
-import util.list_util as lutil
+from src.util import list_util as lutil
+from src.util import string_util as sutil
+from src.util.string_util import StringJoiner
 
 _EXTRA_FONT_INFO = "(cid:9)"
 

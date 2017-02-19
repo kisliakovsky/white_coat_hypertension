@@ -1,17 +1,15 @@
 import operator
-from sys import stderr
 from collections import defaultdict
-# noinspection PyPep8Naming
 from datetime import datetime as DateTime
-# noinspection PyPep8Naming
 from datetime import timedelta as TimeDelta
+from sys import stderr
 
 import numpy as np
 from pandas import DataFrame
 
-import util.string_util as sutil
-import util.list_util as lutil
-import util.math_util as mutil
+from src.util import list_util as lutil
+from src.util import math_util as mutil
+from src.util import string_util as sutil
 
 
 class Report(object):
@@ -838,7 +836,9 @@ class ReportDataFrame(object):
                 dia_all.append(None)
                 for _ in measure_keys:
                     data.append("")
+        # noinspection PyUnresolvedReferences
         dn_intervals = [v for k, v in ReportDataFrame.DAY_NIGHT_INTERVALS]
+        # noinspection PyUnresolvedReferences
         dna_intervals = [v for k, v in ReportDataFrame.DAY_NIGHT_ALT_INTERVALS]
         sys_intervals = lutil.split_list(sys_all, dn_intervals)
         dia_intervals = lutil.split_list(dia_all, dn_intervals)

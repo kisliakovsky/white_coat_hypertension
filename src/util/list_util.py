@@ -1,6 +1,6 @@
-from typing import Tuple, List, Iterable
+from typing import List, Iterable
 
-import util.string_util as su
+from src.util import string_util as su
 
 
 def map_with_ops(ops, a_list):
