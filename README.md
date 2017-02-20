@@ -61,3 +61,6 @@ Please enter the values of periodic measurements of the blood pressure (systolic
 - Исправлено распределение Awake/Asleep периодов 
 ##### Другое
 - Изменено расположение папок *raw* и *output*
+### 1.1.2
+##### Bugs
+- Исправлена внутренняя ошибка, связанная с расчётом СКО  
