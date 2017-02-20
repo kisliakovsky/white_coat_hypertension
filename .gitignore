@@ -94,3 +94,5 @@ ENV/
 # Current projet
 output/
 /README.html
+/raw/*.pdf
+!/raw/example.pdf
