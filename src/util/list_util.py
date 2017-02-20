@@ -1,4 +1,4 @@
-from typing import List, Iterable
+from typing import List, Iterable, Tuple
 
 from src.util import string_util as su
 
@@ -81,5 +81,5 @@ def compare_lists(a: List, b: List) -> bool:
     return len(a) == len([i for i, j in zip(a, b) if i == j])
 
 
-def filter_list_by_value(lst: List, val) -> List:
-    return [x for x in lst if x != val]
+def filter_list_by_values(lst: List, val: Tuple) -> List:
+    return [x for x in lst if x not in val]

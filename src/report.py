@@ -844,12 +844,12 @@ class ReportDataFrame(object):
         dia_intervals = lutil.split_list(dia_all, dn_intervals)
         sysa_intervals = lutil.split_list(sys_all, dna_intervals)
         diaa_intervals = lutil.split_list(dia_all, dna_intervals)
-        sys_all = lutil.filter_list_by_value(sys_all, None)
-        dia_all = lutil.filter_list_by_value(dia_all, None)
-        sys_intervals = [lutil.filter_list_by_value(lst, None) for lst in sys_intervals]
-        dia_intervals = [lutil.filter_list_by_value(lst, None) for lst in dia_intervals]
-        sysa_intervals = [lutil.filter_list_by_value(lst, None) for lst in sysa_intervals][1::2]
-        diaa_intervals = [lutil.filter_list_by_value(lst, None) for lst in diaa_intervals][1::2]
+        sys_all = lutil.filter_list_by_values(sys_all, (None, ""))
+        dia_all = lutil.filter_list_by_values(dia_all, (None, ""))
+        sys_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in sys_intervals]
+        dia_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in dia_intervals]
+        sysa_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in sysa_intervals][1::2]
+        diaa_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in diaa_intervals][1::2]
         data.append(mutil.msd(sys_all))
         data.append(mutil.msd(sys_intervals[0] + sys_intervals[2]))
         data.append(mutil.msd(sysa_intervals[0] + sysa_intervals[2]))
