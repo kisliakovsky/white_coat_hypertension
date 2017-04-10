@@ -1,74 +1,78 @@
-import os
-from os import listdir, makedirs, path
 from pathlib import Path
-from sys import stderr
+from typing import Iterable
 
-import src.page_handling as ph
-
-from src.report import Report, ReportDataFrame
-
-
-def _collect_report_paths(input_dir, input_ext):
-    report_paths = []
-    for report_file in listdir(input_dir):
-        report_path = path.join(input_dir, report_file)
-        if path.isfile(report_path) and (report_file.endswith(input_ext) or report_file.endswith(input_ext.upper())):
-            report_paths.append(report_path)
-    return report_paths
+from src.patient import Patient
+from src.report_logging import LOGGER
+from src.chart import PatientChart
+from src.file_process import ReportFileProcessor
+from src.report_logging import ReportEventMessageBuilder, ReportsStatistics
+from src.report_dataframe import PatientDataFrame
+from src.util import paths
+from src.report import Report
+from src.util.paths import Extension
 
 
-def _extract_report_data(report_path):
-    report_raw_data = ph.get_pages(report_path)[0]
-    return report_raw_data
+INPUT_DIR = Path('..', "raw")
+INPUT_EXT = Extension.PDF
+OUTPUT_DIR = Path('..', "output")
+OUTPUT_EXT = Extension.CSV
+OUTPUT_FILE_NAME = "output"
+OUTPUT_PATH = Path(OUTPUT_DIR, OUTPUT_FILE_NAME)
 
-INPUT_DIR = os.path.join('..', "raw")
-INPUT_EXT = ".pdf"
-OUTPUT_DIR = os.path.join('..', "output")
-OUTPUT_EXT = ".csv"
-OUTPUT_FILE = "output"
-if not path.exists(OUTPUT_DIR):
-    makedirs(OUTPUT_DIR)
-OUTPUT_BASE_NAME = path.join(OUTPUT_DIR, OUTPUT_FILE)
+
+def stream_patients_with_logging(reports_paths: Iterable[Path],
+                                 report_statistics: ReportsStatistics):
+    reports_paths = list(reports_paths)
+    for index, path in enumerate(reports_paths):
+        start_num = index + 1
+        report = __build_report_with_logging(start_num, path, report_statistics)
+        yield Patient(report)
+
+
+def __build_report(report_path: Path) -> Report:
+    report_file = ReportFileProcessor(report_path)
+    blocks = report_file.blocks
+    report_name = report_path.stem
+    return Report(report_name, blocks)
+
+
+def __build_report_with_logging(index: int, path: Path, statistics: ReportsStatistics) -> Report:
+    report_name = path.stem
+    message_builder = ReportEventMessageBuilder(report_name, index, statistics)
+    try:
+        report = __build_report(path)
+        if report.success:
+            message = message_builder.create_message("has been parsed")
+            LOGGER.info(message)
+        else:
+            message = message_builder.create_message("has been parsed with missing values (%s)"
+                                                     % report.message)
+            LOGGER.warning(message)
+        return report
+    except (KeyError, TypeError, ValueError) as err:
+        message = message_builder.create_message("has not been parsed")
+        statistics.inc_counter_of_fails()
+        LOGGER.error(message)
+        LOGGER.debug(err)
 
 
 def main():
-    r_paths = _collect_report_paths(INPUT_DIR, INPUT_EXT)
-    reports = []
-    r_paths_num = len(r_paths)
-    success_num = 0
-    fails_num = 0
-    for i, r_path in enumerate(r_paths):
-        r_raw_data = _extract_report_data(r_path)
-        report = None
-        report_name = path.basename(path.normpath(r_path))
-        report_num = i + 1
-        try:
-            report = Report(r_raw_data)
-            if not report.success:
-                print("%s (Report %s)" % (report.message, report_name), file=stderr)
-        except (TypeError, ValueError):
-            print("Report %s has NOT been parsed (%d/%d)" % (report_name, report_num, r_paths_num), file=stderr)
-            fails_num += 1
-        if report:
-            reports.append(report)
-            print("Report %s has been parsed (%d/%d)" % (report_name, report_num, r_paths_num))
-            success_num += 1
-    report_df = ReportDataFrame(reports)
-    cntr = 1
-    while True:
-        output = "%s_%d%s" % (OUTPUT_BASE_NAME, cntr, OUTPUT_EXT)
-        cntr += 1
-        output_path = Path(output)
-        if output_path.is_file():
-            continue
-        else:
-            report_df.save_csv(output, separator=';')
-            break
-    print("The number of processed reports (success/fail/total): %d/%d/%d" %
-          (success_num, fails_num, r_paths_num))
-    print("The output file was saved as %s" % Path(output).absolute())
-    input('Press ENTER to exit')
+    reports_paths = list(paths.collect_dir_content_by_extension(INPUT_DIR, Extension.PDF))
+    statistics = ReportsStatistics(reports_paths)
+    patients = []
+    for patient in stream_patients_with_logging(reports_paths, statistics):
+        patients.append(patient)
+    patient_chart = PatientChart(patients)
+    patient_chart.save_figures(OUTPUT_DIR, OUTPUT_FILE_NAME)
+    LOGGER.info("Sizes of groups: %s" % patient_chart.sizes_of_groups)
+    patient_dataframe = PatientDataFrame(patients)
+    patient_dataframe.save_csv(OUTPUT_DIR, OUTPUT_FILE_NAME, separator=',')
+    LOGGER.info("Successfully handled: %d/%d"
+                % (statistics.number_of_successes, statistics.number_of_reports))
+    LOGGER.info("Press ENTER to exit")
+    input()
+
 
 if __name__ == '__main__':
+    paths.create_dir(OUTPUT_DIR)
     main()
-

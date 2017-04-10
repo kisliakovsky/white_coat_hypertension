@@ -1,438 +1,407 @@
 import operator
 from collections import defaultdict
-from datetime import datetime as DateTime
-from datetime import timedelta as TimeDelta
+from datetime import datetime
+
 from sys import stderr
 
-import numpy as np
-from pandas import DataFrame
+import collections
+from typing import Tuple, Dict, TypeVar, List, Union
 
-from src.util import list_util as lutil
+from src.file_process import ReportSpace, BlockStore
+from src.report_item import ReportItem, ReportItemKey, ReportItemPattern, ReportString, ReportBlock
 from src.util import math_util as mutil
-from src.util import string_util as sutil
 
 
 class Report(object):
 
-    _TITLE_PATTERN = r"[Rr]eport"
-    _PHYSICIAN_PATTERN = r"[Pp]hysician"
-    _DATE_PATTERN = r"\d+.\d+.\d{4}"
-    _TIME_PATTERN = r"\d+:\d{2}$"
-    _WHITESPACE_PATTERN = r"^\s*$"
-    _PERIOD_PATTERN = r"[Pp]eriod"
-    _STUDY_DATE_PATTERN = r"[Ss]tudy [Dd]ate"
-    _AWAKE_ASLEEP_PATTERN = r"wake.*sleep"
-    _BLOOD_PRESSURE_THRESHOLD_PATTERN = r"[Bb][Pp] [Tt]hreshold"
-    _BLOOD_PRESSURE_LOAD_PATTERN = r"[Bb][Pp] [Ll]oad"
-    _PAGINATOR_PATTERN = r"[Pp]age.*of.*"
-    _READINGS_PATTERN = r"^[Rr]eadings$"
-    _TOTAL_READINGS_PATTERN = r"[Tt]otal [Rr]eadings"
-    _SUCCESSFUL_READINGS_PATTERN = r"\d+\s*\(\d+.*%\)"
-    _PATIENT_ID_LEN_BOUND = (3, 10)
-    _PATIENT_ID_PATTERN = r"^\d{%d,%d}$" % _PATIENT_ID_LEN_BOUND
-    _PATIENT_NAME_PATTERN = r"[\w\.]+ \w+"
-    _PATIENT_SEX_PATTERN = r"^([Ff]em|[Mm])ale$"
-    _DATE_TIME_SYS_PATTERN = r"[Dd]ate.*/.*[Tt]ime.*[Ss]ys"
-    _HEART_RATE_PATTERN = r"^HR$"
-    _SYSTOLIC_PATTERN = r"^Sys$"
-    _DIASTOLIC_PATTERN = r"^Dia$"
-    _AVG_BLOOD_PRESSURE_PATTERN = r"[Aa]verage [Bb]lood [Pp]ressure"
-    _24_HOURS_PATTERN = r"24-h.*"
-    _AWAKE_PATTERN = r"^Awake$"
-    _ASLEEP_PATTERN = r"^Asleep$"
-    _MAP_PP_PATTERN = r"[Mm][Aa][Pp] [Pp][Pp]"
-    _TWO_THREE_DIGITS_NUM_PATTERN = r"^\d{2,3}$"
-    _PARENTHESES_NUM_PATTERN = r"^\(\d+\)$"
-    _COMMA_NUM_PATTERN = r"^\d+,\d+$"
-    _WHITE_COAT_WINDOW_PATTERN = r"[Ww]hite [Cc]oat [Ww]indow"
-    _FIRST_HOUR_PATTERN = r"1st.*h.*[Mm]ax"
-    _NIGHTTIME_DIP_PATTERN = r"[Nn]ight.*[Dd]ip.*%"
-    _DIP_PATTERN = r"^[Dd]ip%$"
-    _PERIOD_TIME_PATTERN = r"^[Tt]ime$"
-    _PERIOD_INTERVAL_PATTERN = r"^[Ii]nterval$"
-    _BREAK_PATTERN = r"^break$"
-
-    _TIME_KEY = "time"
-    _INTERVAL_KEY = "interval"
-    _PERIOD_KPS = tuple(zip((_TIME_KEY, _INTERVAL_KEY),
-                            (_PERIOD_TIME_PATTERN, _PERIOD_INTERVAL_PATTERN)))
-    _DAY_KEY = "day"
-    _NIGHT_KEY = "night"
-    _DAY_NIGHT_KEYS = (_DAY_KEY, _NIGHT_KEY)
-    _TOTAL_READINGS_KEY = "total"
-    _SUCCESSFUL_READINGS_KEY = "success"
-    _READINGS_PAIR = (_READINGS_PATTERN, tuple(zip((_TOTAL_READINGS_KEY, _SUCCESSFUL_READINGS_KEY),
-                                                   (_TOTAL_READINGS_PATTERN, _SUCCESSFUL_READINGS_PATTERN))))
-    DATETIME_KEY = "dt"
-    SYSTOLIC_KEY = "sys"
-    DIASTOLIC_KEY = "dia"
-    HEART_RATE_KEY = "hr"
-    _MEAN_ARTERIAL_PRESSURE_KEY = "map"
-    _PULSE_PRESSURE_KEY = "pp"
-    _VALUES_KEYS = SYSTOLIC_KEY, DIASTOLIC_KEY, HEART_RATE_KEY
-    # _AVG_COL_KEYS = _VALUES_KEYS + (_MEAN_ARTERIAL_PRESSURE_KEY, _PULSE_PRESSURE_KEY)
-    _AVG_COL_KEYS = _VALUES_KEYS
-    _VALUES_PATTERNS = _SYSTOLIC_PATTERN, _DIASTOLIC_PATTERN, _HEART_RATE_PATTERN
-    _VALUES_KPS = tuple(zip(_VALUES_KEYS, _VALUES_PATTERNS))
-    TWENTY_FOUR_HOURS_KEY = "24h"
-    AWAKE_KEY = "awake"
-    ASLEEP_KEY = "asleep"
-    _AVG_ROW_KEYS = TWENTY_FOUR_HOURS_KEY, AWAKE_KEY, ASLEEP_KEY
-
-    READINGS_KEY = "readings"
-    FIRST_HOUR_KEY = "first_hour"
-    _WHITE_COAT_WINDOW_KEYS = READINGS_KEY, FIRST_HOUR_KEY
-    DIP_KEY = "dip"
+    _PERIOD_ITEMS = ReportItem.PERIOD_TIME, ReportItem.PERIOD_INTERVAL
+    _VALUES_ITEMS = ReportItem.SYSTOLIC, ReportItem.DIASTOLIC, ReportItem.HEART_RATE
+    _DAY_NIGHT_KEYS = ReportItemKey.DAY, ReportItemKey.NIGHT
+    _READINGS_PAIR = ReportItemPattern.READINGS, (ReportItem.TOTAL_READINGS,
+                                                  ReportItem.SUCCESSFUL_READINGS)
+    _VALUES_KEYS = ReportItemKey.SYSTOLIC, ReportItemKey.DIASTOLIC, ReportItemKey.HEART_RATE
+    _AVG_COL_KEYS = ReportItemKey.SYSTOLIC, ReportItemKey.DIASTOLIC, ReportItemKey.HEART_RATE
+    _AVG_ROW_KEYS = ReportItemKey.TWENTY_FOUR_HOURS, ReportItemKey.AWAKE, ReportItemKey.ASLEEP
+    _WHITE_COAT_WINDOW_KEYS = ReportItemKey.READINGS, ReportItemKey.FIRST_HOUR
 
     _DATE_FORMAT = "%d.%m.%Y"
     _TIME_FORMAT = "%H:%M"
     _DATE_TIME_FORMAT = "%s %s" % (_DATE_FORMAT, _TIME_FORMAT)
 
-    _ALL_KEY = "all"
-    _PATIENT_KEY = "patient"
-    _DAY_NIGHT_KEY = "daynight"
-    _READINGS_BP_KEY = "readbp"
-    _AVG_BP_KEY = "avg"
-    _WHITE_COAT_WINDOW_KEY = "wcw"
-    _NIGHTTIME_DIP_KEY = "ntd"
-    _VALUES_KEY = "values"
-    _VALUES_1_SD_KEY = "values1sd"
-    _VALUES_1_HR_KEY = "values1hr"
-    _VALUES_2_SD_KEY = "values2sd"
-    _VALUES_2_HR_KEY = "values2hr"
-    _VALUES_3_SD_KEY = "values3sd"
-    _VALUES_3_HR_KEY = "values3hr"
-    _VALUES_4_SD_KEY = "values4sd"
-    _VALUES_4_HR_KEY = "values4hr"
-    _VALUES_SD_KEYS = (_VALUES_1_SD_KEY, _VALUES_2_SD_KEY, _VALUES_3_SD_KEY, _VALUES_4_SD_KEY)
-    _VALUES_HR_KEYS = (_VALUES_1_HR_KEY, _VALUES_2_HR_KEY, _VALUES_3_HR_KEY, _VALUES_4_HR_KEY)
-    _WHITE_COAT_WINDOW_KP = (_WHITE_COAT_WINDOW_KEY, _WHITE_COAT_WINDOW_PATTERN)
-    _NIGHTTIME_DIP_KP = (_NIGHTTIME_DIP_KEY, _NIGHTTIME_DIP_PATTERN)
+    _VALUES_SD_KEYS = (ReportSpace.VALUES_1_COLUMN_SD, ReportSpace.VALUES_2_COLUMN_SD,
+                       ReportSpace.VALUES_3_COLUMN_SD, ReportSpace.VALUES_4_COLUMN_SD)
+    _VALUES_HR_KEYS = (ReportSpace.VALUES_1_COLUMN_HR, ReportSpace.VALUES_2_COLUMN_HR,
+                       ReportSpace.VALUES_3_COLUMN_HR, ReportSpace.VALUES_4_COLUMN_HR)
 
     _MAX_COLUMN_VALUES_NUM = 25
 
-    _BREAK_KEY = "break"
-
-    def __init__(self, blocks):
+    def __init__(self, name: str, blocks: BlockStore):
+        self.__name = name
         self.__blocks = blocks
-        self.__raw_data = blocks[Report._ALL_KEY]
-        self.__remove_item(Report._PAGINATOR_PATTERN)
-        self.__title = self.__remove_item(Report._TITLE_PATTERN)
-        self.__physician = self.__handle_and_remove_item(Report._PHYSICIAN_PATTERN, sutil.get_value_of_entry)
+        main_block = blocks.get(ReportSpace.ALL)
+        main_block.remove_item(ReportItemPattern.PAGINATOR)
+        self.__title = self.__parse_title()
+        self.__physician = self.__parse_physician()
         self.__period = self.__parse_period()
-        self.__study_date = self.__handle_and_remove_item(Report._STUDY_DATE_PATTERN,
-                                                          lambda item: sutil.search_in_str(Report._DATE_PATTERN, item))
-        self.__awake, self.__asleep = self.__parse_awake_asleep()
+        self.__study_date = self.__parse_study_date()
+        self.__awake, self.__asleep = self.__parse_awake_asleep
         self.__bp_threshold = self.__parse_bp_threshold()
         self.__readings = self.__parse_readings()
         self.__bp_load = self.__parse_bp_load()
-        self.__remove_item(Report._PERIOD_PATTERN)
-        patient_id = self.__remove_item(Report._PATIENT_ID_PATTERN, Report._PATIENT_KEY)
-        if not patient_id:
-            patient_id = self.__remove_item(Report._PATIENT_ID_PATTERN)
-        self.__patient_id = "'%s'" % patient_id
-        patient_name = self.__remove_item(Report._PATIENT_NAME_PATTERN, Report._PATIENT_KEY)
-        if not patient_name:
-            patient_name = self.__remove_item(Report._PATIENT_NAME_PATTERN)
-        self.__patient_name = patient_name
-        self.__patient_sex, self.__patient_age, self.__patient_date_of_birth = self.__parse_sex_age_dob_triplet()
+        main_block.remove_item(ReportItemPattern.PERIOD)
+        self.__patient_id = self.__parse_patient_id()
+        self.__patient_name = self.__parse_patient_name()
+        sex_and_age_and_dob = self.__parse_sex_age_dob_triplet()
+        self.__patient_sex, self.__patient_age, self.__patient_date_of_birth = sex_and_age_and_dob
         self.__avg_bp = self.__parse_avg_bp()
         self.__white_coat_window = self.__parse_white_coat_window()
-        self.__nighttime_dip = self.__parse_nighttime_dip()
-        self.__values, success, message = self.__parse_values()
-        self.__success = success
-        self.__message = message
+        self.__night_time_dip = self.__parse_night_time_dip()
+        self.__values, self.__success, self.__message = self.__parse_values()
 
     @property
-    def blocks(self):
+    def name(self) -> str:
+        return self.__name
+
+    @property
+    def blocks(self) -> BlockStore:
         return self.__blocks
 
     @property
-    def raw_data(self):
-        return self.__raw_data
-
-    @property
-    def title(self):
+    def title(self) -> str:
         return self.__title
 
     @property
-    def physician(self):
+    def physician(self) -> str:
         return self.__physician
 
     @property
-    def period(self):
+    def period(self) -> Dict[ReportItemKey, Dict[ReportItemKey, str]]:
         return self.__period
 
     @property
-    def study_date(self):
+    def study_date(self) -> str:
         return self.__study_date
 
     @property
-    def awake(self):
+    def awake(self) -> str:
         return self.__awake
 
     @property
-    def asleep(self):
+    def asleep(self) -> str:
         return self.__asleep
 
     @property
-    def bp_threshold(self):
+    def bp_threshold(self) -> Dict[ReportItemKey, str]:
         return self.__bp_threshold
 
     @property
-    def readings(self):
+    def readings(self) -> Dict[ReportItemKey, str]:
         return self.__readings
 
     @property
-    def bp_load(self):
+    def bp_load(self) -> Dict[ReportItemKey, str]:
         return self.__bp_load
 
     @property
-    def patient_id(self):
+    def patient_id(self) -> str:
         return self.__patient_id
 
     @property
-    def patient_name(self):
+    def patient_name(self) -> str:
         return self.__patient_name
 
     @property
-    def patient_sex(self):
+    def patient_sex(self) -> str:
         return self.__patient_sex
 
     @property
-    def patient_age(self):
+    def patient_age(self) -> str:
         return self.__patient_age
 
     @property
-    def patient_date_of_birth(self):
+    def patient_date_of_birth(self) -> str:
         return self.__patient_date_of_birth
 
     @property
-    def values(self):
+    def values(self) -> Dict[ReportItemKey, List[Union[str, int, datetime]]]:
         return self.__values
 
     @property
-    def avg_bp(self):
+    def avg_bp(self) -> Dict[ReportItemKey, Dict[ReportItemKey, Union[str, int]]]:
         return self.__avg_bp
 
     @property
-    def nighttime_dip(self):
-        return self.__nighttime_dip
+    def night_time_dip(self) -> Dict[ReportItemKey, Dict[ReportItemKey, Union[str, float]]]:
+        return self.__night_time_dip
 
     @property
-    def white_coat_window(self):
+    def white_coat_window(self) -> Dict[ReportItemKey, Dict[ReportItemKey, Union[str, int]]]:
         return self.__white_coat_window
 
     @property
-    def success(self):
+    def success(self) -> bool:
         return self.__success
 
     @property
-    def message(self):
+    def message(self) -> str:
         return self.__message
 
-    def __search_first_in_list(self,  pattern, block_key=_ALL_KEY, remove_after=False, replace_after=None):
-        return lutil.search_first_in_list(self.__blocks[block_key], pattern, remove_after, replace_after)
+    def __parse_title(self) -> str:
+        main_block = self.blocks.get(ReportSpace.ALL)
+        title = main_block.remove_item(ReportItemPattern.TITLE)
+        return str(title)
 
-    def __search_sequence_in_list(self, header_pattern, num, block_key=_ALL_KEY, remove_after=False):
-        return lutil.search_sequence_in_list(self.__blocks[block_key], header_pattern, num, remove_after)
+    def __parse_physician(self) -> str:
+        main_block = self.blocks.get(ReportSpace.ALL)
+        physician_entry = main_block.remove_item(ReportItemPattern.PHYSICIAN_ENTRY).as_entry()
+        physician = physician_entry[1]
+        return physician
 
-    def __search_among_neighbors(self, i, neighbor_pattern, block_key=_ALL_KEY, remove_after=False):
-        return lutil.search_among_neighbors(self.__blocks[block_key], i, neighbor_pattern, remove_after)
+    def __parse_study_date(self) -> str:
+        main_block = self.blocks.get(ReportSpace.ALL)
+        study_date = main_block.remove_item(ReportItemPattern.STUDY_DATE)
+        study_date = study_date.matches(ReportItemPattern.DATE)
+        return study_date
 
-    def __remove_item(self,  pattern, block_key=_ALL_KEY):
-        return self.__search_first_in_list(pattern, block_key, remove_after=True)
+    def __parse_patient_id(self) -> str:
+        main_block = self.blocks.get(ReportSpace.ALL)
+        patient_block = self.blocks.get(ReportSpace.PATIENT)
+        patient_id = str(patient_block.remove_item(ReportItemPattern.PATIENT_ID))
+        if not patient_id:
+            patient_id = str(main_block.remove_item(ReportItemPattern.PATIENT_ID))
+        return "'%s'" % patient_id
 
-    def __replace_item(self, pattern, replace_after, block_key=_ALL_KEY):
-        return self.__search_first_in_list(pattern, block_key, replace_after=replace_after)
+    def __parse_patient_name(self) -> str:
+        main_block = self.blocks.get(ReportSpace.ALL)
+        patient_block = self.blocks.get(ReportSpace.PATIENT)
+        patient_name = str(patient_block.remove_item(ReportItemPattern.PATIENT_NAME))
+        if not patient_name:
+            patient_name = str(main_block.remove_item(ReportItemPattern.PATIENT_NAME))
+        return patient_name
 
-    def __handle_and_remove_item(self, pattern, handle_op, block_key=_ALL_KEY):
-        res = self.__remove_item(pattern, block_key)
-        if res:
-            res = handle_op(res)
-        return res
-
-    def __parse_period(self):
-        period = {}
-        self.__remove_item(Report._PERIOD_PATTERN, Report._DAY_NIGHT_KEY)
+    def __parse_period(self) -> Dict[ReportItemKey, Dict[ReportItemKey, str]]:
+        day_night_block = self.blocks.get(ReportSpace.DAY_NIGHT)
+        day_night_block.remove_item(ReportItemPattern.PERIOD)
         num_of_values = 2
-        _, period_times = self.__search_sequence_in_list(Report._PERIOD_KPS[0][1], num_of_values,
-                                                         Report._DAY_NIGHT_KEY, remove_after=True)
-        _, period_intervals = self.__search_sequence_in_list(Report._PERIOD_KPS[1][1], num_of_values,
-                                                             Report._DAY_NIGHT_KEY, remove_after=True)
+        period_times = day_night_block.search_sequence_by_header_pattern_and_remove(
+            ReportItem.PERIOD_TIME.pattern, num_of_values)
+        period_intervals = day_night_block.search_sequence_by_header_pattern_and_remove(
+            ReportItem.PERIOD_INTERVAL.pattern, num_of_values)
+        period = {}
         if period_times and period_intervals:
             for i, key in enumerate(Report._DAY_NIGHT_KEYS):
-                period[key] = {Report._PERIOD_KPS[0][0]: period_times[i],
-                               Report._PERIOD_KPS[1][0]: mutil.parse_quantity(period_intervals[i])}
+                period_time = period_times[i]
+                period_interval = ReportString(period_intervals[i]).as_value()
+                period[key] = {ReportItem.PERIOD_TIME.key: period_time,
+                               ReportItem.PERIOD_INTERVAL.key: period_interval}
         return period
 
-    def __parse_awake_asleep(self):
+    @property
+    def __parse_awake_asleep(self) -> Tuple[str, str]:
+        day_night_block = self.blocks.get(ReportSpace.DAY_NIGHT)
         awake = None
         asleep = None
         num_of_values = 2
-        _, awake_asleep = self.__search_sequence_in_list(Report._AWAKE_ASLEEP_PATTERN, num_of_values,
-                                                         Report._DAY_NIGHT_KEY, remove_after=True)
+        awake_asleep = day_night_block.search_sequence_by_header_pattern_and_remove(
+            ReportItemPattern.AWAKE_ASLEEP, num_of_values)
         if awake_asleep:
-            awake = sutil.get_value_of_entry(awake_asleep[0])
-            asleep = sutil.get_value_of_entry(awake_asleep[1])
-        return awake, asleep
+            awake = ReportString(awake_asleep[0]).as_entry()
+            asleep = ReportString(awake_asleep[1]).as_entry()
+        return awake[1], asleep[1]
 
-    def __parse_readings(self):
+    def __parse_readings(self) -> Dict[ReportItemKey, str]:
         readings = {}
-        self.__remove_item(Report._READINGS_PAIR[0])
-        for pair in Report._READINGS_PAIR[1]:
-            readings[pair[0]] = self.__handle_and_remove_item(pair[1], sutil.get_value_of_entry,
-                                                              Report._READINGS_BP_KEY)
+        main_block = self.blocks.get(ReportSpace.ALL)
+        readings_block = self.blocks.get(ReportSpace.READINGS_BP)
+        # TODO: Why is it removed from the main block not from the readings block?
+        main_block.remove_item(ReportItemPattern.READINGS)
+        total_readings = readings_block.remove_item(ReportItemPattern.TOTAL_READINGS)
+        total_readings = total_readings.as_entry()
+        readings[ReportItemKey.TOTAL_READINGS] = total_readings[1]
+        successful_readings = readings_block.remove_item(ReportItemPattern.SUCCESSFUL_READINGS)
+        readings[ReportItemKey.SUCCESSFUL_READINGS] = str(successful_readings)
         return readings
 
-    def __parse_bp_value(self, pattern, block, op):
-        bp_val = {}
+    def __parse_bp_threshold(self) -> Dict[ReportItemKey, str]:
+        bp_value = {}
         num_of_values = 2
-        _, periods = self.__search_sequence_in_list(pattern, num_of_values, block, remove_after=True)
-        if periods:
+        day_night_block = self.blocks.get(ReportSpace.DAY_NIGHT)
+        thresholds = day_night_block.search_sequence_by_header_pattern_and_remove(
+            ReportItemPattern.BLOOD_PRESSURE_THRESHOLD, num_of_values)
+        if thresholds:
             for i, key in enumerate(Report._DAY_NIGHT_KEYS):
-                bp_val[key] = op(key, periods[i])
-        return bp_val
+                threshold = ReportString(thresholds[i]).as_entry()
+                bp_value[key] = ReportString(threshold[1]).as_value()
+        return bp_value
 
-    def __parse_bp_threshold(self):
-        return self.__parse_bp_value(Report._BLOOD_PRESSURE_THRESHOLD_PATTERN,
-                                     Report._DAY_NIGHT_KEY,
-                                     lambda key, period: mutil.parse_quantity(sutil.get_value_of_entry(period)))
-
-    def __parse_bp_load(self):
-        return self.__parse_bp_value(Report._BLOOD_PRESSURE_LOAD_PATTERN,
-                                     Report._READINGS_BP_KEY,
-                                     lambda key, period:
-                                     sutil.cut_if_start_with(key, period, trim=True, case_sense=False))
-
-    def __parse_sex_age_dob_triplet(self):
+    def __parse_bp_load(self) -> Dict[ReportItemKey, str]:
+        bp_value = {}
         num_of_values = 2
-        patient_sex, age_and_birth_date = self.__search_sequence_in_list(Report._PATIENT_SEX_PATTERN, num_of_values,
-                                                                         Report._PATIENT_KEY)
+        day_night_block = self.blocks.get(ReportSpace.READINGS_BP)
+        loads = day_night_block.search_sequence_by_header_pattern_and_remove(
+            ReportItemPattern.BLOOD_PRESSURE_LOAD, num_of_values)
+        if loads:
+            for i, key in enumerate(Report._DAY_NIGHT_KEYS):
+                load = ReportString(loads[i])
+                key_str = key.as_string()
+                if load.case_insensitive().starts_with(key_str):
+                    load = load.cut_header(len(key_str))
+                bp_value[key] = str(load)
+        return bp_value
+
+    def __parse_sex_age_dob_triplet(self) -> Tuple[str, str, str]:
+        num_of_values = 2
+        patient_block = self.blocks.get(ReportSpace.PATIENT)
+        patient_sex, age_and_birth_date = patient_block.search_sequence_by_header_pattern(
+            ReportItemPattern.PATIENT_SEX, num_of_values)
         patient_age = None
         patient_date_of_birth = None
         if age_and_birth_date:
             patient_age = age_and_birth_date[0]
+            # TODO: Try to refactor it.
             try:
                 patient_date_of_birth = age_and_birth_date[1]
                 num_of_values = 2
-                self.__search_sequence_in_list(Report._PATIENT_SEX_PATTERN, num_of_values,
-                                               Report._PATIENT_KEY, remove_after=True)
+                patient_block.search_sequence_by_header_pattern_and_remove(
+                    ReportItemPattern.PATIENT_SEX, num_of_values)
             except ValueError:
                 pass
         return patient_sex, patient_age, patient_date_of_birth
 
-    _REMOVE_SHIFT = 2
-
-    def __parse_avg_bp_24h_row(self):
+    # TODO: Try to refactor it.
+    def __parse_avg_bp_24h_row(self) -> List[int]:
         row = []
-        key_idx_pairs = []
-        for key_pattern in Report._VALUES_KPS:
-            idx, _ = self.__search_first_in_list(key_pattern[1], Report._AVG_BP_KEY)
-            key_idx_pairs.append((key_pattern[0], idx))
-        key_idx_pairs.sort(key=operator.itemgetter(1))
+        key_index_pairs = []
+        avg_bp_block = self.blocks.get(ReportSpace.AVG_BP)
+        for value_item in Report._VALUES_ITEMS:
+            index, _ = avg_bp_block.search_first_occurrence_by_pattern(value_item.pattern)
+            key_index_pairs.append((value_item.key, index))
+        key_index_pairs.sort(key=operator.itemgetter(1))
         val_dict = {}
-        for i, key_idx_pair in enumerate(key_idx_pairs):
-            _, avg_br_fr_val = self.__search_among_neighbors(key_idx_pair[1] - Report._REMOVE_SHIFT * i,
-                                                             Report._TWO_THREE_DIGITS_NUM_PATTERN,
-                                                             Report._AVG_BP_KEY, remove_after=True)
-            val_dict[key_idx_pair[0]] = avg_br_fr_val
-        for key in Report._VALUES_KEYS:
-            row.append(int(val_dict[key]))
-        self.__remove_item(Report._24_HOURS_PATTERN, Report._AVG_BP_KEY)
+        remove_shift = 2
+        for i, key_index_pair in enumerate(key_index_pairs):
+            key, index = key_index_pair
+            avg_br_fr_val = avg_bp_block.search_among_neighbors_and_remove(
+                index - remove_shift * i, ReportItemPattern.TWO_THREE_DIGITS_NUM)
+            val_dict[key] = str(avg_br_fr_val)
+        for value_key in Report._VALUES_KEYS:
+            row.append(int(val_dict[value_key]))
+        avg_bp_block.remove_item(ReportItemPattern.TWENTY_FOUR_HOURS)
         return row
 
-    def __parse_avg_bp(self):
+    # TODO: Try to refactor it.
+    def __parse_avg_bp(self) -> Dict[ReportItemKey, Dict[ReportItemKey, Union[str, int]]]:
         avg_bp = defaultdict(dict)
-        self.__remove_item(Report._AVG_BLOOD_PRESSURE_PATTERN, Report._AVG_BP_KEY)
+        avg_bp_block = self.blocks.get(ReportSpace.AVG_BP)
+        avg_bp_block.remove_item(ReportItemPattern.AVG_BLOOD_PRESSURE)
         for i in range(9):
-            self.__remove_item(Report._PARENTHESES_NUM_PATTERN, Report._AVG_BP_KEY)
-        twenty_four_h_vals = self.__parse_avg_bp_24h_row()
+            avg_bp_block.remove_item(ReportItemPattern.PARENTHESES_NUM)
+        twenty_four_hours_values = self.__parse_avg_bp_24h_row()
         num_of_values = 3
 
-        def parse_avg_seq_vals(pattern):
-            _, vals = self.__search_sequence_in_list(pattern, num_of_values, Report._AVG_BP_KEY, remove_after=True)
-            for k in range(len(vals)):
+        def parse_avg_seq_vals(pattern: ReportItemPattern) -> List[Union[str, int]]:
+            values = avg_bp_block.search_sequence_by_header_pattern_and_remove(pattern,
+                                                                               num_of_values)
+            for k in range(len(values)):
                 try:
-                    vals[k] = int(vals[k])
+                    values[k] = int(values[k])
                 except ValueError:
                     pass
-            return vals
-        awake_vals = parse_avg_seq_vals(Report._AWAKE_PATTERN)
-        asleep_vals = parse_avg_seq_vals(Report._ASLEEP_PATTERN)
-        all_vals = (twenty_four_h_vals, awake_vals, asleep_vals)
-        for i, row in enumerate(all_vals):
+            return values
+
+        awake_values = parse_avg_seq_vals(ReportItemPattern.AWAKE)
+        asleep_values = parse_avg_seq_vals(ReportItemPattern.ASLEEP)
+        all_values = (twenty_four_hours_values, awake_values, asleep_values)
+        for i, row in enumerate(all_values):
             for j, val in enumerate(row):
                 avg_bp[Report._AVG_COL_KEYS[j]][Report._AVG_ROW_KEYS[i]] = val
-        return avg_bp
+        return dict(avg_bp)
 
-    def __parse_white_coat_window(self):
+    # TODO: Try to refactor it.
+    def __parse_white_coat_window(self) -> Dict[ReportItemKey, Dict[ReportItemKey,
+                                                                    Union[str, int]]]:
         white_coat_window = defaultdict(dict)
-        self.__remove_item(Report._WHITE_COAT_WINDOW_KP[1], Report._WHITE_COAT_WINDOW_KP[0])
-        self.__remove_item(Report._NIGHTTIME_DIP_PATTERN, Report._WHITE_COAT_WINDOW_KP[0])
-        self.__remove_item(Report._READINGS_PATTERN, Report._WHITE_COAT_WINDOW_KP[0])
-        self.__remove_item(Report._FIRST_HOUR_PATTERN, Report._WHITE_COAT_WINDOW_KP[0])
+        white_coat_window_block = self.blocks.get(ReportSpace.WHITE_COAT_WINDOW)
+        white_coat_window_block.remove_item(ReportItemPattern.WHITE_COAT_WINDOW)
+        white_coat_window_block.remove_item(ReportItemPattern.NIGHT_TIME_DIP)
+        white_coat_window_block.remove_item(ReportItemPattern.READINGS)
+        white_coat_window_block.remove_item(ReportItemPattern.FIRST_HOUR)
         num_of_values = 2
 
-        def parse_wcw_seq_vals(pattern):
-            _, vals = self.__search_sequence_in_list(pattern, num_of_values,
-                                                     Report._WHITE_COAT_WINDOW_KP[0], remove_after=True)
-            for k in range(len(vals)):
+        def parse_white_coat_window_consecutive_values(
+                pattern: ReportItemPattern) -> List[Union[str, int]]:
+            values = white_coat_window_block.search_sequence_by_header_pattern_and_remove(
+                pattern, num_of_values)
+            for k in range(len(values)):
                 try:
-                    vals[k] = int(vals[k])
+                    values[k] = int(values[k])
                 except ValueError:
                     pass
-            return vals
-        sys_vals = parse_wcw_seq_vals(Report._VALUES_KPS[0][1])
-        dia_vals = parse_wcw_seq_vals(Report._VALUES_KPS[1][1])
-        hr_vals = parse_wcw_seq_vals(Report._VALUES_KPS[2][1])
-        all_vals = [sys_vals, dia_vals, hr_vals]
-        for i, row in enumerate(all_vals):
-            for j, val in enumerate(row):
-                white_coat_window[Report._VALUES_KPS[i][0]][Report._WHITE_COAT_WINDOW_KEYS[j]] = val
-        return white_coat_window
+            return values
 
-    def __parse_nighttime_dip(self):
-        nighttime_dip = defaultdict(dict)
-        self.__remove_item(Report._NIGHTTIME_DIP_PATTERN[1], Report._NIGHTTIME_DIP_KP[0])
+        sys_values = parse_white_coat_window_consecutive_values(Report._VALUES_ITEMS[0].pattern)
+        dia_values = parse_white_coat_window_consecutive_values(Report._VALUES_ITEMS[1].pattern)
+        hr_values = parse_white_coat_window_consecutive_values(Report._VALUES_ITEMS[2].pattern)
+        all_values = [sys_values, dia_values, hr_values]
+        for i, row in enumerate(all_values):
+            for j, value in enumerate(row):
+                values_by_type = white_coat_window[Report._VALUES_ITEMS[i].key]
+                values_by_type[Report._WHITE_COAT_WINDOW_KEYS[j]] = value
+        return dict(white_coat_window)
 
-        def parse_ntd_seq_val(pattern):
-            _, vals = self.__search_sequence_in_list(pattern, 1,
-                                                     Report._NIGHTTIME_DIP_KP[0], remove_after=True)
-            corr_delim_val = vals[0].replace(',', '.')
+    def __parse_night_time_dip(self) -> Dict[ReportItemKey, Dict[ReportItemKey, Union[str, float]]]:
+        night_time_dip = defaultdict(dict)
+        night_time_dip_block = self.blocks.get(ReportSpace.NIGHT_TIME_DIP)
+        night_time_dip_block.remove_item(ReportItemPattern.NIGHT_TIME_DIP)
+        num_of_values = 1
+
+        def parse_night_time_dip_value(
+                pattern: ReportItemPattern) -> Union[str, float]:
+            values = night_time_dip_block.search_sequence_by_header_pattern_and_remove(
+                pattern, num_of_values)
+            corrected_by_delimiter_value = values[0].replace(',', '.')
             try:
-                corr_delim_val = float(corr_delim_val)
+                corrected_by_delimiter_value = float(corrected_by_delimiter_value)
             except ValueError:
                 pass
-            return corr_delim_val
-        for i in range(2):
-            nighttime_dip[Report._VALUES_KPS[i][0]][Report.DIP_KEY] = parse_ntd_seq_val(Report._VALUES_KPS[i][1])
-        return nighttime_dip
+            return corrected_by_delimiter_value
 
-    def __parse_values(self):
+        for i in range(2):
+            value_item = Report._VALUES_ITEMS[i]
+            values_by_type = night_time_dip[value_item.key]
+            values_by_type[ReportItemKey.DIP] = parse_night_time_dip_value(value_item.pattern)
+        return dict(night_time_dip)
+
+    def __parse_values(self) -> Tuple[Dict[ReportItemKey, List[Union[str, int, datetime]]],
+                                      bool, str]:
         all_vals = {}
-        dt_cols, t_nums = self.__parse_dt_cols(remove_after=True)
-        hr_cols = self.__parse_hr_cols(t_nums)
-        sd_cols, (success, message) = self.__parse_sd_cols(t_nums)
+        dt_cols, t_nums = self.__parse_datetime_columns(remove_after=True)
+        hr_cols = self.__parse_hr_columns(t_nums)
+        sd_cols, (success, message) = self.__parse_sd_columns(t_nums)
         sys_cols, dia_cols = sd_cols
         for _ in t_nums:
-            all_vals[Report.DATETIME_KEY] = [item for sublist in dt_cols for item in sublist]
-            all_vals[Report.SYSTOLIC_KEY] = [item for sublist in sys_cols for item in sublist]
-            all_vals[Report.DIASTOLIC_KEY] = [item for sublist in dia_cols for item in sublist]
-            all_vals[Report.HEART_RATE_KEY] = [item for sublist in hr_cols for item in sublist]
+            all_vals[ReportItemKey.DATETIME] = [item for sublist in dt_cols for item in sublist]
+            all_vals[ReportItemKey.SYSTOLIC] = [item for sublist in sys_cols for item in sublist]
+            all_vals[ReportItemKey.DIASTOLIC] = [item for sublist in dia_cols for item in sublist]
+            all_vals[ReportItemKey.HEART_RATE] = [item for sublist in hr_cols for item in sublist]
         return all_vals, success, message
 
-    def __parse_sd_cols(self, t_nums):
+    def __parse_sd_columns(
+            self, t_nums:
+            List[Union[Tuple[int, ...], int, str]]) -> Tuple[Tuple[List[List[Union[int, str]]],
+                                                                   List[List[Union[int, str]]]],
+                                                             Tuple[bool, str]]:
         sys_cols = []
         dia_cols = []
         message = None
         global_success = True
         for i, t_num in enumerate(t_nums):
-            res, local_success = self.__parse_sd_col(Report._VALUES_SD_KEYS[i], t_num)
+            res, local_success = self.__parse_sd_column(Report._VALUES_SD_KEYS[i], t_num)
             if not local_success:
                 global_success = local_success
                 message = "Please enter the values of periodic measurements of " \
-                          "the blood pressure (systolic and diastolic) of the column #%d manually" % (i + 1)
+                          "the blood pressure (systolic and diastolic) of the column #%d " \
+                          "manually" % (i + 1)
             sys_col, dia_col = res
             if sys_col:
                 sys_cols.append(sys_col)
@@ -440,42 +409,47 @@ class Report(object):
                 dia_cols.append(dia_col)
         return (sys_cols, dia_cols), (global_success, message)
 
-    def __parse_sd_col(self, sd_key, t_num):
-        sys_col = []
-        dia_col = []
+    def __parse_sd_column(
+            self, sd_key: ReportSpace, t_num: Union[Tuple[int, ...],
+                                                    int]) -> Union[
+                                                             Tuple[Tuple[List[int], ...], bool],
+                                                             Tuple[List[int], List[int]]]:
+        sys_column = []
+        dia_column = []
         sd_col = []
         num_group = []
-        block = self.blocks[sd_key]
+        block = self.blocks.get(sd_key)
         if not block:
-            return sys_col, dia_col
-        idx, _ = self.__search_first_in_list(Report._TWO_THREE_DIGITS_NUM_PATTERN, sd_key)
-        while idx < len(block):
-            val = block[idx]
-            match = sutil.search_in_str(Report._TWO_THREE_DIGITS_NUM_PATTERN, val)
+            return sys_column, dia_column
+        index, _ = block.search_first_occurrence_by_pattern(ReportItemPattern.TWO_THREE_DIGITS_NUM)
+        while index < len(block):
+            value = block[index]
+            match = ReportString(value).matches(ReportItemPattern.TWO_THREE_DIGITS_NUM)
             if match:
-                num_group.append(int(val))
+                num_group.append(int(value))
             elif num_group:
                 sd_col.append(num_group)
                 num_group = []
-            idx += 1
+            index += 1
         if num_group:
             sd_col.append(num_group)
         col_pair = None
 
-        def distribute_columns_by_mean(columns):
+        def distribute_columns_by_mean(columns: List[List[int]]):
             if mutil.mean(columns[0]) < mutil.mean(columns[1]):
                 columns[0], columns[1] = columns[1], columns[0]
 
         def merge_columns(col_first_part, col_second_part):
-            cols = [col_first_part[0] + col_second_part[0], col_first_part[1] + col_second_part[1]]
-            return cols
+            columns = [col_first_part[0] + col_second_part[0],
+                       col_first_part[1] + col_second_part[1]]
+            return columns
 
         def distribute_and_merge_columns(col_first_part, col_second_part):
             distribute_columns_by_mean(col_first_part)
             distribute_columns_by_mean(col_second_part)
             return merge_columns(col_first_part, col_second_part)
 
-        def process_columns(columns):
+        def process_columns(columns: List[Tuple[int, List[int]]]):
             columns = columns[:2]
             return [each[0] for each in columns], [each[1] for each in columns]
 
@@ -484,9 +458,9 @@ class Report(object):
             half_len = int(len(columns) / 2)
             return k, [columns[:half_len], columns[half_len:]]
 
-        def clear_values(indices):
-            for index in sorted(indices, reverse=True):
-                del sd_col[index]
+        def clear_values(indices: List[int]):
+            for idx in sorted(indices, reverse=True):
+                del sd_col[idx]
 
         if isinstance(t_num, tuple):
             tn_full = sum(t_num)
@@ -526,8 +500,8 @@ class Report(object):
                         col_pair = distribute_and_merge_columns(sd_fp, sd_sp)
                         clear_values(remove_indices)
                     elif double_sd_sp_len >= 1:
-                        idx, double_sd_sp = process_double_columns(double_sd_sp)
-                        remove_indices.append(idx)
+                        index, double_sd_sp = process_double_columns(double_sd_sp)
+                        remove_indices.append(index)
                         col_pair = distribute_and_merge_columns(sd_fp, double_sd_sp)
                         clear_values(remove_indices)
                     elif sd_full_len >= 1:
@@ -536,16 +510,16 @@ class Report(object):
                         distribute_columns_by_mean(col_pair)
                         clear_values(indcs)
                 elif double_sd_fp_len >= 1:
-                    idx, double_sd_fp = process_double_columns(double_sd_fp)
-                    remove_indices.append(idx)
+                    index, double_sd_fp = process_double_columns(double_sd_fp)
+                    remove_indices.append(index)
                     if sd_sp_len >= 2:
                         indcs, sd_sp = process_columns(sd_sp)
                         remove_indices.extend(indcs)
                         col_pair = distribute_and_merge_columns(double_sd_fp, sd_sp)
                         clear_values(remove_indices)
                     elif double_sd_sp_len >= 1:
-                        idx, double_sd_sp = process_double_columns(double_sd_sp)
-                        remove_indices.append(idx)
+                        index, double_sd_sp = process_double_columns(double_sd_sp)
+                        remove_indices.append(index)
                         col_pair = distribute_and_merge_columns(double_sd_fp, double_sd_sp)
                         clear_values(remove_indices)
                 elif sd_fp_len >= 1 and sd_sp_len >= 1 and sd_full_len >= 1:
@@ -563,7 +537,10 @@ class Report(object):
                     col_pair = sd_full
                     clear_values(indcs)
             if not col_pair:
-                col_pair = [['' for i in range(tn_full)] for j in range(2)]
+                col_pair = []
+                for _ in range(2):
+                    # noinspection PyUnusedLocal
+                    col_pair.append(['' for temp in range(tn_full)])
                 return tuple(col_pair), False
         else:
             pair = []
@@ -586,102 +563,105 @@ class Report(object):
                     break
         return tuple(col_pair), True
 
-    def __parse_hr_cols(self, t_nums):
-        hr_cols = []
+    def __parse_hr_columns(self, t_nums):
+        hr_columns = []
         for i, t_num in enumerate(t_nums):
-            hr_col = self.__parse_hr_col(Report._VALUES_HR_KEYS[i], t_num)
-            if hr_col:
-                hr_cols.append(hr_col)
-        return hr_cols
+            hr_column = self.__parse_hr_column(Report._VALUES_HR_KEYS[i], t_num)
+            if hr_column:
+                hr_columns.append(hr_column)
+        return hr_columns
 
-    def __parse_hr_col(self, hr_key, t_num):
-        hr_col = []
+    def __parse_hr_column(self, hr_key: ReportSpace, t_num):
+        hr_column = []
         num_group = []
-        block = self.blocks[hr_key]
+        block = self.blocks.get(hr_key)
         if not block:
-            return hr_col
-        idx, _ = self.__search_first_in_list(Report._TWO_THREE_DIGITS_NUM_PATTERN, hr_key)
-        while idx < len(block):
-            val = block[idx]
-            match = sutil.search_in_str(Report._TWO_THREE_DIGITS_NUM_PATTERN, val)
+            return hr_column
+        index, _ = block.search_first_occurrence_by_pattern(ReportItemPattern.TWO_THREE_DIGITS_NUM)
+        while index < len(block):
+            value = block[index]
+            match = ReportString(value).matches(ReportItemPattern.TWO_THREE_DIGITS_NUM)
             if match:
-                num_group.append(int(val))
+                num_group.append(int(value))
             elif num_group:
-                hr_col.append(num_group)
+                hr_column.append(num_group)
                 num_group = []
-            idx += 1
+            index += 1
         if num_group:
-            hr_col.append(num_group)
+            hr_column.append(num_group)
         if isinstance(t_num, tuple):
             buff = []
             for num in t_num:
-                for part in hr_col:
+                for part in hr_column:
                     if num == len(part):
                         buff.append(part)
                         break
             if len(buff) == len(t_num):
-                hr_col = [item for sublist in buff for item in sublist]
-            elif len(hr_col[0]) == sum(t_num):
-                hr_col = hr_col[0]
+                hr_column = [item for sublist in buff for item in sublist]
+            elif len(hr_column[0]) == sum(t_num):
+                hr_column = hr_column[0]
             else:
                 print("Wrong number of values", file=stderr)
         else:
-            if len(hr_col[0]) == t_num:
-                hr_col = hr_col[0]
+            if len(hr_column[0]) == t_num:
+                hr_column = hr_column[0]
             else:
                 print("Wrong number of values", file=stderr)
-        return hr_col
+        return hr_column
 
-    def __parse_dt_cols(self, remove_after=False):
-        dt_cols = []
+    def __parse_datetime_columns(self, remove_after=False):
+        datetime_columns = []
         t_nums = []
-        date_res = None
+        date_result = None
         for key in Report._VALUES_SD_KEYS:
-            dt_col, t_num, date_res = self.__parse_dt_col(key, remove_after, date_res)
-            if dt_col:
-                dt_cols.append(dt_col)
+            datetime_column, t_num, date_result = self.__parse_datetime_column(key, remove_after,
+                                                                               date_result)
+            if datetime_column:
+                datetime_columns.append(datetime_column)
                 t_nums.append(t_num)
-        return dt_cols, t_nums
+        return datetime_columns, t_nums
 
-    def __parse_dt_col(self, dt_key, remove_after=False, date_res=None):
-        dt_col = []
-        cntr = 0
+    def __parse_datetime_column(self, datetime_key: ReportSpace, remove_after=False,
+                                date_result=None):
+        datetime_column = []
+        counter = 0
         times = []
         time_num = []
-        block = self.blocks[dt_key]
+        block = self.blocks.get(datetime_key)
         if not block:
-            return dt_col, 0, date_res
-        if not date_res:
-            _, date_res = self.__search_first_in_list(Report._DATE_PATTERN, dt_key)
-        idx, time_res = self.__search_first_in_list(Report._TIME_PATTERN, dt_key)
-        while idx < len(block):
-            val = block[idx]
-            match = sutil.search_in_str(Report._DATE_PATTERN, val)
+            return datetime_column, 0, date_result
+        if not date_result:
+            _, date_result = block.search_first_occurrence_by_pattern(ReportItemPattern.DATE)
+            date_result = str(date_result)
+        index, time_result = block.search_first_occurrence_by_pattern(ReportItemPattern.TIME)
+        while index is not None and index < len(block):
+            value = block[index]
+            match = ReportString(value).matches(ReportItemPattern.DATE)
             if match:
-                dt_col.extend(times)
-                time_num.append(cntr)
-                date_res = val
+                datetime_column.extend(times)
+                time_num.append(counter)
+                date_result = value
                 times = []
-                cntr = 0
+                counter = 0
             else:
-                match = sutil.search_in_str(Report._TIME_PATTERN, val)
+                match = ReportString(value).matches(ReportItemPattern.TIME)
                 if match:
-                    time_res = val
-                    dt = " ".join((date_res, time_res))
-                    times.append(DateTime.strptime(dt, Report._DATE_TIME_FORMAT))
-                    cntr += 1
+                    time_result = value
+                    dt = " ".join((date_result, time_result))
+                    times.append(datetime.strptime(dt, Report._DATE_TIME_FORMAT))
+                    counter += 1
                 elif times:
-                    dt_col.extend(times)
+                    datetime_column.extend(times)
                     if len(time_num) > 0 and time_num[0] == 0:
-                        time_num[0] = cntr
+                        time_num[0] = counter
                     else:
-                        time_num.append(cntr)
+                        time_num.append(counter)
                     times = []
-                    cntr = 0
-            idx += 1
+                    counter = 0
+            index += 1
         if times:
-            dt_col.extend(times)
-            time_num.append(cntr)
+            datetime_column.extend(times)
+            time_num.append(counter)
         if len(time_num) == 1:
             time_num = time_num[0]
         else:
@@ -692,306 +672,16 @@ class Report(object):
         if remove_after:
             new_data = []
             first = False
-            for item in block:
-                if not (sutil.search_in_str(Report._DATE_PATTERN, item)
-                        or
-                        sutil.search_in_str(Report._TIME_PATTERN, item)):
-                    new_data.append(item)
-                    first = True
-                elif first:
-                    new_data.append(Report._BREAK_KEY)
-                    first = False
-            self.__blocks[dt_key] = new_data
-        return dt_col, time_num, date_res
-
-
-class ReportDataFrame(object):
-
-    _ID_KEY = "Id"
-    _PATIENT_NAME_KEY = "Name"
-    _DATE_OF_BIRTH_KEY = "DOB"
-    _BP_PHENOTYPE_KEY = "BP phenotype"
-    _BP_PROFILE_KEY = "BP profile"
-    _LAST_HOUR_MAX_SYS_BP_KEY = "Last hour max sBP"
-    _SINGLE_KEYS = (_ID_KEY, _PATIENT_NAME_KEY, _DATE_OF_BIRTH_KEY, _BP_PHENOTYPE_KEY,
-                    _BP_PROFILE_KEY, _LAST_HOUR_MAX_SYS_BP_KEY)
-    _AVG_DAY_KEY = "Avg BP per day"
-    _AVG_AWAKE_KEY = "Avg BP while awake"
-    _AVG_ASLEEP_KEY = "Avg BP while asleep"
-    _AVG_KEYS = (_AVG_DAY_KEY, _AVG_AWAKE_KEY, _AVG_ASLEEP_KEY)
-    _FIRST_HOUR_MAX_KEY = "BP max 1st hour"
-    _MSD_ALL_SYS_KEY = "sMSD all"
-    _MSD_DAY_SYS_KEY = "sMSD day (07-23)"
-    _MSD_ALT_DAY_SYS_KEY = "sMSD day (10-20)"
-    _MSD_NIGHT_SYS_KEY = "sMSD night (23-07)"
-    _MSD_ALT_NIGHT_SYS_KEY = "sMSD night (00-06)"
-    _MSD_ALL_DIA_KEY = "dMSD all"
-    _MSD_DAY_DIA_KEY = "dMSD day (07-23)"
-    _MSD_ALT_DAY_DIA_KEY = "dMSD day (10-20)"
-    _MSD_NIGHT_DIA_KEY = "dMSD night (23-07)"
-    _MSD_ALT_NIGHT_DIA_KEY = "dMSD night (00-06)"
-    _MSD_KEYS = (_MSD_ALL_SYS_KEY, _MSD_DAY_SYS_KEY, _MSD_ALT_DAY_SYS_KEY,
-                 _MSD_NIGHT_SYS_KEY, _MSD_ALT_NIGHT_SYS_KEY, _MSD_ALL_DIA_KEY,
-                 _MSD_DAY_DIA_KEY, _MSD_ALT_DAY_DIA_KEY, _MSD_NIGHT_DIA_KEY,
-                 _MSD_ALT_NIGHT_DIA_KEY)
-    _DAY_TIME_KEY = "Awake time"
-    _NIGHT_TIME_KEY = "Asleep time"
-    _EXTRA_TIME_KEY = "Extra time"
-    _SYSTOLIC_KEY = "sBP"
-    _DIASTOLIC_KEY = "dBP"
-    _HEART_RATE_KEY = "HR"
-    _MEASUREMENT_KEYS = (_SYSTOLIC_KEY, _DIASTOLIC_KEY, _HEART_RATE_KEY)
-
-    _DATE_FORMAT = "%d.%m.%Y"
-    _TIME_FORMAT = "%H:%M"
-    _DATETIME_FORMAT = "%s %s" % (_DATE_FORMAT, _TIME_FORMAT)
-
-    _TIME_INTERVAL = TimeDelta(minutes=15)
-    _START_TIME = DateTime.strptime("01.01.1970 8:00", _DATETIME_FORMAT)
-    _FINISH_TIME = DateTime.strptime("02.01.1970 17:00", _DATETIME_FORMAT) + _TIME_INTERVAL
-    _TIME_PERIOD = _FINISH_TIME - _START_TIME
-    _FIRST_DAY_START_TIME = DateTime.strptime("01.01.1970 7:00", _DATETIME_FORMAT)
-    _FIRST_NIGHT_START_TIME = DateTime.strptime("01.01.1970 23:00", _DATETIME_FORMAT)
-    _ALT_FIRST_DAY_START_TIME = DateTime.strptime("01.01.1970 10:00", _DATETIME_FORMAT)
-    _ALT_FIRST_DAY_FINISH_TIME = DateTime.strptime("01.01.1970 20:00", _DATETIME_FORMAT)
-    _ALT_FIRST_NIGHT_START_TIME = DateTime.strptime("02.01.1970 00:00", _DATETIME_FORMAT)
-    _ALT_FIRST_NIGHT_END_TIME = DateTime.strptime("02.01.1970 06:00", _DATETIME_FORMAT)
-    _DAY_LEN = _FIRST_NIGHT_START_TIME - _FIRST_DAY_START_TIME
-    _NIGHT_LEN = _FIRST_DAY_START_TIME + _TIME_PERIOD - _FIRST_NIGHT_START_TIME
-    _TIME_INTERVAL_NUM = int(_TIME_PERIOD / _TIME_INTERVAL)
-
-    def __new__(cls, *args, **kwargs):
-        cls.DAY_NIGHT_INTERVALS = cls._calc_day_night_intervals()
-        cls.DAY_NIGHT_ALT_INTERVALS = cls._calc_day_night_alt_intervals()
-        return super(ReportDataFrame, cls).__new__(cls)
-
-    def __init__(self, reports):
-        ReportDataFrame._calc_day_night_intervals()
-        self.__columns = ReportDataFrame._prepare_columns()
-        data = []
-        for report in reports:
-            data.append(ReportDataFrame._prepare_data(report))
-        self.__frame = DataFrame(np.asarray(data), columns=self.__columns)
-
-    @staticmethod
-    def _prepare_data(report):
-        measure_keys = (Report.SYSTOLIC_KEY, Report.DIASTOLIC_KEY, Report.HEART_RATE_KEY)
-        # noinspection PyListCreation
-        data = []
-        data.append(report.patient_id)
-        data.append(report.patient_name)
-        data.append(report.patient_date_of_birth)
-        data.append(_calc_blood_pressure_phenotype(report.avg_bp, report.white_coat_window))
-        data.append(_calc_blood_pressure_profile(report.nighttime_dip))
-        report_values = report.values
-        dts = report_values[Report.DATETIME_KEY]
-        last_idx = len(dts) - 1
-        last_hour = dts[-1] - TimeDelta(hours=1)
-        last_hour_idx = last_idx
-        for i, dt in enumerate(dts):
-            if dt >= last_hour:
-                last_hour_idx = i
-        syss = report_values[Report.SYSTOLIC_KEY][last_hour_idx: last_idx + 1]
-        last_hour_max_sys = '-'
-        try:
-            if isinstance(syss, list):
-                last_hour_max_sys = max(syss)
-            else:
-                last_hour_max_sys = syss
-        except ValueError:
-            pass
-        data.append(last_hour_max_sys)
-        for outer in (Report.TWENTY_FOUR_HOURS_KEY, Report.AWAKE_KEY, Report.ASLEEP_KEY):
-            for inner in measure_keys:
-                val = report.avg_bp[inner][outer]
-                try:
-                    val = float(val)
-                except ValueError:
-                    pass
-                data.append(val)
-        data.append(report.white_coat_window[Report.SYSTOLIC_KEY][Report.FIRST_HOUR_KEY])
-        time_columns = []
-        curr_time = ReportDataFrame._START_TIME
-        for i in range(ReportDataFrame._TIME_INTERVAL_NUM):
-            time_columns.append(curr_time.time())
-            curr_time += ReportDataFrame._TIME_INTERVAL
-        index = 0
-        measure_dates = report_values[Report.DATETIME_KEY]
-        measure_dates_num = len(measure_dates)
-        sys_all = []
-        dia_all = []
-        for time in time_columns:
-            if index < measure_dates_num:
-                report_time = measure_dates[index].time()
-            else:
-                report_time = None
-            if report_time == time:
-                sys_all.append(report_values[Report.SYSTOLIC_KEY][index])
-                dia_all.append(report_values[Report.DIASTOLIC_KEY][index])
-                for key in measure_keys:
-                    data.append(report_values[key][index])
-                index += 1
-            else:
-                sys_all.append(None)
-                dia_all.append(None)
-                for _ in measure_keys:
-                    data.append("")
-        # noinspection PyUnresolvedReferences
-        dn_intervals = [v for k, v in ReportDataFrame.DAY_NIGHT_INTERVALS]
-        # noinspection PyUnresolvedReferences
-        dna_intervals = [v for k, v in ReportDataFrame.DAY_NIGHT_ALT_INTERVALS]
-        sys_intervals = lutil.split_list(sys_all, dn_intervals)
-        dia_intervals = lutil.split_list(dia_all, dn_intervals)
-        sysa_intervals = lutil.split_list(sys_all, dna_intervals)
-        diaa_intervals = lutil.split_list(dia_all, dna_intervals)
-        sys_all = lutil.filter_list_by_values(sys_all, (None, ""))
-        dia_all = lutil.filter_list_by_values(dia_all, (None, ""))
-        sys_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in sys_intervals]
-        dia_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in dia_intervals]
-        sysa_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in sysa_intervals][1::2]
-        diaa_intervals = [lutil.filter_list_by_values(lst, (None, "")) for lst in diaa_intervals][1::2]
-        data.append(mutil.msd(sys_all))
-        data.append(mutil.msd(sys_intervals[0] + sys_intervals[2]))
-        data.append(mutil.msd(sysa_intervals[0] + sysa_intervals[2]))
-        data.append(mutil.msd(sys_intervals[1]))
-        data.append(mutil.msd(sysa_intervals[1]))
-        data.append(mutil.msd(dia_all))
-        data.append(mutil.msd(dia_intervals[0] + dia_intervals[2]))
-        data.append(mutil.msd(diaa_intervals[0] + diaa_intervals[2]))
-        data.append(mutil.msd(dia_intervals[1]))
-        data.append(mutil.msd(diaa_intervals[1]))
-        return data
-
-    @staticmethod
-    def _calc_day_night_intervals():
-        twenty_four_hours = TimeDelta(hours=24)
-        intervals = []
-        first_day_length = ReportDataFrame._FIRST_NIGHT_START_TIME - ReportDataFrame._START_TIME
-        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(first_day_length / ReportDataFrame._TIME_INTERVAL)))
-        sec_day_start_time = ReportDataFrame._FIRST_DAY_START_TIME + twenty_four_hours
-        first_night_length = sec_day_start_time - ReportDataFrame._FIRST_NIGHT_START_TIME
-        intervals.append((ReportDataFrame._NIGHT_TIME_KEY, int(first_night_length / ReportDataFrame._TIME_INTERVAL)))
-        sec_day_length = ReportDataFrame._FINISH_TIME - sec_day_start_time
-        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(sec_day_length / ReportDataFrame._TIME_INTERVAL)))
-        return intervals
-
-    @staticmethod
-    def _calc_day_night_alt_intervals():
-        twenty_four_hours = TimeDelta(hours=24)
-        intervals = []
-        extra_length = ReportDataFrame._ALT_FIRST_DAY_START_TIME - ReportDataFrame._START_TIME
-        intervals.append((ReportDataFrame._EXTRA_TIME_KEY, int(extra_length / ReportDataFrame._TIME_INTERVAL)))
-        first_day_length = ReportDataFrame._ALT_FIRST_DAY_FINISH_TIME - ReportDataFrame._ALT_FIRST_DAY_START_TIME
-        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(first_day_length / ReportDataFrame._TIME_INTERVAL)))
-        extra_length = ReportDataFrame._ALT_FIRST_NIGHT_START_TIME - ReportDataFrame._ALT_FIRST_DAY_FINISH_TIME
-        intervals.append((ReportDataFrame._EXTRA_TIME_KEY, int(extra_length / ReportDataFrame._TIME_INTERVAL)))
-        first_night_length = ReportDataFrame._ALT_FIRST_NIGHT_END_TIME - ReportDataFrame._ALT_FIRST_NIGHT_START_TIME
-        intervals.append((ReportDataFrame._NIGHT_TIME_KEY, int(first_night_length / ReportDataFrame._TIME_INTERVAL)))
-        sec_day_start_time = ReportDataFrame._ALT_FIRST_DAY_START_TIME + twenty_four_hours
-        extra_length = sec_day_start_time - ReportDataFrame._ALT_FIRST_NIGHT_END_TIME
-        intervals.append((ReportDataFrame._EXTRA_TIME_KEY, int(extra_length / ReportDataFrame._TIME_INTERVAL)))
-        sec_day_length = ReportDataFrame._FINISH_TIME - sec_day_start_time
-        intervals.append((ReportDataFrame._DAY_TIME_KEY, int(sec_day_length / ReportDataFrame._TIME_INTERVAL)))
-        return intervals
-
-    @staticmethod
-    def _prepare_columns():
-
-        header_rows = []
-
-        header_row = []
-        for key in ReportDataFrame._SINGLE_KEYS:
-            header_row.append(key)
-        for key in ReportDataFrame._AVG_KEYS:
-            for _ in ReportDataFrame._MEASUREMENT_KEYS:
-                header_row.append(key)
-        header_row.append(ReportDataFrame._FIRST_HOUR_MAX_KEY)
-        # noinspection PyUnresolvedReferences
-        for day_night_key, num in ReportDataFrame.DAY_NIGHT_INTERVALS:
-            for i in range(num):
-                for _ in ReportDataFrame._MEASUREMENT_KEYS:
-                    header_row.append(day_night_key)
-        for msd_key in ReportDataFrame._MSD_KEYS:
-            header_row.append(msd_key)
-        header_rows.append(header_row)
-
-        header_row = []
-        for _ in ReportDataFrame._SINGLE_KEYS:
-            header_row.append("")
-        for _ in ReportDataFrame._AVG_KEYS:
-            for key in ReportDataFrame._MEASUREMENT_KEYS:
-                header_row.append(key)
-        header_row.append("")
-        time_columns = []
-        curr_time = ReportDataFrame._START_TIME
-        for i in range(ReportDataFrame._TIME_INTERVAL_NUM):
-            time_columns.append('%s' % curr_time.time().strftime(ReportDataFrame._TIME_FORMAT))
-            curr_time += ReportDataFrame._TIME_INTERVAL
-        for time_column in time_columns:
-            for _ in ReportDataFrame._MEASUREMENT_KEYS:
-                header_row.append(time_column)
-        for _ in ReportDataFrame._MSD_KEYS:
-            header_row.append("")
-        header_rows.append(header_row)
-
-        header_row = []
-        middle_keys_len = len(ReportDataFrame._SINGLE_KEYS)
-        middle_keys_len += len(ReportDataFrame._AVG_KEYS) * len(ReportDataFrame._MEASUREMENT_KEYS) + 1
-        for i in range(middle_keys_len):
-            header_row.append("")
-        for _ in time_columns:
-            for key in ReportDataFrame._MEASUREMENT_KEYS:
-                header_row.append(key)
-        for _ in ReportDataFrame._MSD_KEYS:
-            header_row.append("")
-        header_rows.append(header_row)
-
-        return header_rows
-
-    @property
-    def frame(self):
-        return self.__frame
-
-    def save_csv(self, file_name, encoding=None, separator=','):
-        self.__frame.to_csv(file_name, encoding=encoding, index=False, sep=separator)
-
-EMPTY_VALUE_STR = "--"
-
-
-def _calc_blood_pressure_profile(night_time_dip):
-    ntd_sys = night_time_dip[Report.SYSTOLIC_KEY][Report.DIP_KEY]
-    if ntd_sys == EMPTY_VALUE_STR:
-        return EMPTY_VALUE_STR
-    if 10 < ntd_sys <= 20:
-        return 1
-    elif 0 < ntd_sys <= 10:
-        return 2
-    elif ntd_sys <= 0:
-        return 3
-    elif 20 < ntd_sys:
-        return 4
-
-
-_BP_AWAKE_SYS_NORM = 135
-_DIFF_BP_SYS_NORM = 10
-
-
-# noinspection PyChainedComparisons
-def _calc_blood_pressure_phenotype(avg_bp, white_coat_window):
-    avg_bp_sys = avg_bp[Report.SYSTOLIC_KEY][Report.AWAKE_KEY]
-    wcw_sys = white_coat_window[Report.SYSTOLIC_KEY][Report.FIRST_HOUR_KEY]
-    if wcw_sys == EMPTY_VALUE_STR:
-        return EMPTY_VALUE_STR
-    diff = abs(avg_bp_sys - wcw_sys)
-    if avg_bp_sys < _BP_AWAKE_SYS_NORM and wcw_sys < _BP_AWAKE_SYS_NORM and diff < _DIFF_BP_SYS_NORM:
-        return 1
-    elif avg_bp_sys < _BP_AWAKE_SYS_NORM and wcw_sys < _BP_AWAKE_SYS_NORM and diff >= _DIFF_BP_SYS_NORM:
-        return 2
-    elif (avg_bp_sys >= _BP_AWAKE_SYS_NORM or wcw_sys >= _BP_AWAKE_SYS_NORM) and diff < _DIFF_BP_SYS_NORM:
-        return 3
-    elif avg_bp_sys >= _BP_AWAKE_SYS_NORM and wcw_sys < _BP_AWAKE_SYS_NORM and diff >= _DIFF_BP_SYS_NORM:
-        return 4
-    elif avg_bp_sys < _BP_AWAKE_SYS_NORM and wcw_sys >= _BP_AWAKE_SYS_NORM and diff >= _DIFF_BP_SYS_NORM:
-        return 5
-    elif avg_bp_sys >= _BP_AWAKE_SYS_NORM and wcw_sys >= _BP_AWAKE_SYS_NORM and diff >= _DIFF_BP_SYS_NORM:
-        return 6
+            if isinstance(block, collections.Iterable):
+                for item in block:
+                    item_report_str = ReportString(item)
+                    if not (item_report_str.matches(ReportItemPattern.DATE)
+                            or
+                            item_report_str.matches(ReportItemPattern.TIME)):
+                        new_data.append(item)
+                        first = True
+                    elif first:
+                        new_data.append(ReportItemKey.BREAK.as_string())
+                        first = False
+            self.blocks.replace(datetime_key, ReportBlock(new_data))
+        return datetime_column, time_num, date_result

@@ -64,3 +64,5 @@ Please enter the values of periodic measurements of the blood pressure (systolic
 ### 1.1.2
 ##### Bugs
 - Исправлена внутренняя ошибка, связанная с расчётом СКО  
+### 2.0.0
+TBD
